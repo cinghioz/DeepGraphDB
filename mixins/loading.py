@@ -2,8 +2,9 @@ import dgl
 import torch
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Any
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,6 @@ class LoadingMixin:
             node_types: Dict mapping node_type -> DataFrame with node data
             edge_types: Dict mapping (src_type, edge_type, dst_type) -> DataFrame with edge data
         """
-        import time
         start_time = time.time()
         
         print("Optimizing node mappings...")
@@ -176,4 +176,144 @@ class LoadingMixin:
             print(f"  {etype}: {self.graph.num_edges(etype):,} edges")
         
         return self.graph
+
+    def load_node_features_for_gnn(self, global_features_tensor: torch.Tensor, 
+                               feature_name: str = "x") -> Dict[str, Any]:
+        """
+        Load node features for GNN training/inference from global feature tensor.
+        
+        Args:
+            global_features_tensor: Tensor of shape [num_global_nodes, feat_dim]
+                                Position i corresponds to global_id i
+            feature_name: Name to store the features under (default: "gnn_features")
+            
+        Returns:
+            Dict with loading statistics and feature organization info
+        """
+        if self.graph is None:
+            raise ValueError("No graph loaded. Load a graph first.")
+        
+        if len(global_features_tensor.shape) != 2:
+            raise ValueError(f"Expected 2D tensor [num_nodes, feat_dim], got shape {global_features_tensor.shape}")
+        
+        num_global_nodes, feat_dim = global_features_tensor.shape
+        print(f"Loading {feat_dim}-dimensional features for {num_global_nodes} global nodes...")
+        
+        start_time = time.time()
+        
+        if not self.is_heterogeneous():
+            # Homogeneous graph: simple case
+            result = self._load_features_homogeneous(global_features_tensor, feature_name)
+        else:
+            # Heterogeneous graph: organize by node types
+            result = self._load_features_heterogeneous(global_features_tensor, feature_name)
+        
+        loading_time = time.time() - start_time
+        result['loading_time'] = loading_time
+        result['feature_name'] = feature_name
+        result['feature_dim'] = feat_dim
+        
+        print(f"Feature loading completed in {loading_time:.3f}s")
+        print(f"Features organized by: {list(self.node_features.keys())}")
+        
+        return result
+
+    def _load_features_homogeneous(self, global_features_tensor: torch.Tensor, 
+                                feature_name: str) -> Dict[str, Any]:
+        """Load features for homogeneous graphs."""
+        num_nodes = self.graph.num_nodes()
+        feat_dim = global_features_tensor.shape[1]
+        
+        # For homogeneous graphs, global_id == local_id, so we can use features directly
+        # But we need to ensure we only take features for existing nodes
+        max_global_id = min(global_features_tensor.shape[0] - 1, num_nodes - 1)
+        
+        if num_nodes <= global_features_tensor.shape[0]:
+            # We have features for all nodes (and possibly more)
+            self.node_features["nodes"] = global_features_tensor[:num_nodes].clone()
+            used_features = num_nodes
+        else:
+            # We have fewer features than nodes - pad with zeros
+            print(f"Warning: Only {global_features_tensor.shape[0]} features provided for {num_nodes} nodes")
+            padded_features = torch.zeros(num_nodes, feat_dim, dtype=global_features_tensor.dtype)
+            padded_features[:global_features_tensor.shape[0]] = global_features_tensor
+            self.node_features["nodes"] = padded_features
+            used_features = global_features_tensor.shape[0]
+        
+        # Also store in DGL graph for convenience
+        self.graph.ndata[feature_name] = self.node_features["nodes"]
+        
+        return {
+            'graph_type': 'homogeneous',
+            'total_nodes': num_nodes,
+            'features_used': used_features,
+            'features_stored': {'nodes': self.node_features["nodes"].shape}
+        }
+
+    def _load_features_heterogeneous(self, global_features_tensor: torch.Tensor, 
+                                    feature_name: str) -> Dict[str, Any]:
+        """Load features for heterogeneous graphs organized by node type."""
+        feat_dim = global_features_tensor.shape[1]
+        features_by_type = {}
+        stats = {}
+        
+        # Organize global_ids by node type and create ordered feature tensors
+        for node_type in self.graph.ntypes:
+            num_nodes_this_type = self.graph.num_nodes(node_type)
+            
+            # Collect global_ids for this node type in local_id order
+            global_ids_ordered = []
+            missing_global_ids = []
+            
+            for local_id in range(num_nodes_this_type):
+                # Find the global_id that maps to (node_type, local_id)
+                global_id = self.reverse_node_mapping.get((node_type, local_id))
+                
+                if global_id is not None:
+                    global_ids_ordered.append(global_id)
+                else:
+                    # This shouldn't happen if mappings are correct
+                    missing_global_ids.append(local_id)
+                    global_ids_ordered.append(-1)  # Placeholder
+            
+            # Create feature tensor for this node type
+            type_features = torch.zeros(num_nodes_this_type, feat_dim, 
+                                    dtype=global_features_tensor.dtype)
+            
+            features_found = 0
+            for local_id, global_id in enumerate(global_ids_ordered):
+                if global_id != -1 and global_id < global_features_tensor.shape[0]:
+                    type_features[local_id] = global_features_tensor[global_id]
+                    features_found += 1
+                # else: keep zeros for missing features
+            
+            # Store features
+            self.node_features[node_type] = type_features
+            features_by_type[node_type] = type_features
+            
+            # Also store in DGL graph
+            self.graph.nodes[node_type].data[feature_name] = type_features
+            
+            # Statistics
+            stats[node_type] = {
+                'num_nodes': num_nodes_this_type,
+                'features_found': features_found,
+                'missing_global_ids': len(missing_global_ids),
+                'feature_shape': tuple(type_features.shape)
+            }
+            
+            if missing_global_ids:
+                print(f"Warning: {len(missing_global_ids)} local_ids in {node_type} have no global_id mapping")
+        
+        total_nodes_with_features = sum(stats[nt]['features_found'] for nt in stats)
+        total_nodes = sum(stats[nt]['num_nodes'] for nt in stats)
+        
+        return {
+            'graph_type': 'heterogeneous',
+            'node_types': list(self.graph.ntypes),
+            'total_nodes': total_nodes,
+            'total_features_assigned': total_nodes_with_features,
+            'stats_by_type': stats,
+            'coverage_ratio': total_nodes_with_features / total_nodes if total_nodes > 0 else 0
+        }
     

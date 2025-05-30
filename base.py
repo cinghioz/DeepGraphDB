@@ -1,6 +1,6 @@
 import dgl
 from typing import Dict, Any, Optional, Tuple
-import warnings
+from dataloader import CoverageBasedDataLoader
 
 class GraphDatabaseBase:
     """Base class containing core attributes and basic functionality"""
@@ -14,6 +14,7 @@ class GraphDatabaseBase:
         self.node_types_mapping = {} # string -> int
         self.edge_types_mapping = {} # string -> int
         self._degree_cache: Optional[Dict[str, Any]] = None
+        self.node_features = {}
     
     def is_heterogeneous(self) -> bool:
         """Check if the graph is heterogeneous."""
