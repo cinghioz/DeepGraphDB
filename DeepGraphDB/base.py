@@ -1,6 +1,5 @@
 import dgl
 from typing import Dict, Any, Optional, Tuple
-from dataloader import CoverageBasedDataLoader
 
 class GraphDatabaseBase:
     """Base class containing core attributes and basic functionality"""
