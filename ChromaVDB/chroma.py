@@ -3,8 +3,7 @@ from typing import Dict, List, Optional, Any, Union
 import uuid
 import time
 from datetime import datetime
-
-#TODO: fixxare bulk load
+import pickle
 
 class ChromaFramework:
     """
@@ -21,8 +20,10 @@ class ChromaFramework:
         Args:
             persist_directory: Directory to persist the database. If None, uses in-memory storage.
         """
+        self.persist_directory = persist_directory or "./ChromaVDB"
+
         if persist_directory:
-            self.client = chromadb.PersistentClient(path=persist_directory)
+            self.client = chromadb.PersistentClient(path=self.persist_directory)
         else:
             self.client = chromadb.Client()
         
@@ -35,7 +36,13 @@ class ChromaFramework:
             "text": self.text_collection
         }
 
-        self.global_to_vids_mapping = {}
+        try:
+            with open(persist_directory+'/global_mapping.pkl', 'rb') as f:
+                print("Found existing mapping file, loading...")
+                self.global_to_vids_mapping = pickle.load(f)
+        except FileNotFoundError:
+            print("No mapping file found, starting with empty mapping")
+            self.global_to_vids_mapping = {}
 
     def create_records(self, 
                     global_ids: List[int],
@@ -161,6 +168,9 @@ class ChromaFramework:
             if "already exists" in str(e):
                 raise ValueError(f"One or more records already exist")
             raise e
+
+        with open(self.persist_directory+"/global_mapping.pkl", 'wb') as f:
+            pickle.dump(self.global_to_vids_mapping, f)
         
         return record_ids
     
@@ -183,7 +193,7 @@ class ChromaFramework:
         for embedding_type, collection in self.collections.items():
             try:
                 results = collection.get(
-                    ids=[record_ids],
+                    ids=record_ids,
                     include=["documents", "metadatas", "embeddings"] if include_embeddings else ["documents", "metadatas"]
                 )
                 
@@ -317,6 +327,14 @@ class ChromaFramework:
             except Exception:
                 continue
         
+        if deleted:
+            for global_id, rec_id in self.global_to_vids_mapping.items():
+                if rec_id in record_id:
+                    del self.global_to_vids_mapping[global_id]
+
+            with open(self.persist_directory+"/global_mapping.pkl", 'wb') as f:
+                pickle.dump(self.global_to_vids_mapping, f)
+
         return deleted
     
     def list_records(self, 
