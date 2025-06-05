@@ -10,7 +10,8 @@ from .mixins import (
     MetaPathMixin,
     QueryMixin,
     UtilityMixin,
-    CrudMixin
+    CrudMixin,
+    TrainerMixin
 )
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ class DeepGraphDB(
     MetaPathMixin,
     QueryMixin,
     UtilityMixin,
-    CrudMixin
+    CrudMixin,
+    TrainerMixin
 ):
     """
     Scalable graph database using DGL for knowledge graphs and large-scale graph operations.

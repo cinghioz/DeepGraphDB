@@ -5,6 +5,7 @@ from .metapath import MetaPathMixin
 from .query import QueryMixin
 from .utility import UtilityMixin
 from .crud import CrudMixin
+from .trainer import TrainerMixin
 
 __all__ = [
     'LoadingMixin',
@@ -13,5 +14,6 @@ __all__ = [
     'MetaPathMixin',
     'QueryMixin',
     'UtilityMixin',
-    'CrudMixin'
+    'CrudMixin',
+    'TrainerMixin'
 ]

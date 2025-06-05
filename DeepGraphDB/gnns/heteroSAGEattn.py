@@ -30,12 +30,16 @@ class HeteroGraphSAGE(nn.Module):
         self.edge_types = edge_types
         self.num_layers = num_layers
         self.use_attention = use_attention
+
+        print(node_types)
         
         # Input projection for different node types
         self.input_proj = nn.ModuleDict({
             ntype: nn.Linear(in_feats[ntype] if isinstance(in_feats, dict) else in_feats, hidden_feats)
             for ntype in node_types
         })
+
+        print(self.input_proj)
         
         # GraphSAGE layers
         self.sage_layers = nn.ModuleList()
@@ -178,44 +182,6 @@ class MultiEdgeTypePredictor(nn.Module):
             
             return scores
 
-class AdvancedHeteroLinkPredictor(nn.Module):
-    """
-    Advanced heterogeneous link prediction model with multiple edge type support
-    """
-    def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, 
-                 num_layers=3, use_attention=True, predictor_type='multi_edge', target_etypes=None):
-        super().__init__()
-        self.node_types = node_types
-        self.edge_types = edge_types
-        self.target_etypes = target_etypes or edge_types
-        
-        # Advanced GNN backbone (uses all edge types for message passing)
-        self.gnn = HeteroGraphSAGE(
-            node_types=node_types,
-            edge_types=edge_types,
-            in_feats=in_feats,
-            hidden_feats=hidden_feats,
-            out_feats=out_feats,
-            num_layers=num_layers,
-            use_attention=use_attention
-        )
-        
-        # Advanced predictor (only for target edge types)
-        if predictor_type == 'multi_edge':
-            self.predictor = MultiEdgeTypePredictor(out_feats, hidden_feats, self.target_etypes)
-        else:
-            self.predictor = HeteroMLPPredictor(out_feats)
-            
-    def forward(self, pos_graph, neg_graph, blocks, x, etype):
-        # Get node representations
-        h = self.gnn(blocks, x)
-        
-        # Compute scores
-        pos_score = self.predictor(pos_graph, h, etype)
-        neg_score = self.predictor(neg_graph, h, etype)
-        
-        return pos_score, neg_score
-
 class HeteroMLPPredictor(nn.Module):
     """Enhanced MLP predictor with residual connections"""
     def __init__(self, in_features, hidden_features=128):
@@ -258,3 +224,76 @@ class HeteroMLPPredictor(nn.Module):
             # Output projection
             scores = self.output_proj(x).squeeze()
             return scores
+
+class AdvancedHeteroLinkPredictor(nn.Module):
+    """
+    Advanced heterogeneous link prediction model with multiple edge type support
+    """
+    def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, 
+                 num_layers=3, use_attention=True, predictor_type='multi_edge', target_etypes=None):
+        super().__init__()
+        self.node_types = node_types
+        self.edge_types = edge_types
+        self.target_etypes = target_etypes or edge_types
+        
+        # Advanced GNN backbone (uses all edge types for message passing)
+        self.gnn = HeteroGraphSAGE(
+            node_types=node_types,
+            edge_types=edge_types,
+            in_feats=in_feats,
+            hidden_feats=hidden_feats,
+            out_feats=out_feats,
+            num_layers=num_layers,
+            use_attention=use_attention
+        )
+        
+        # Advanced predictor (only for target edge types)
+        if predictor_type == 'multi_edge':
+            self.predictor = MultiEdgeTypePredictor(out_feats, hidden_feats, self.target_etypes)
+        else:
+            self.predictor = HeteroMLPPredictor(out_feats)
+            
+    def forward(self, pos_graph, neg_graph, blocks, x, etype):
+        # Get node representations
+        h = self.gnn(blocks, x)
+        
+        # Compute scores
+        pos_score = self.predictor(pos_graph, h, etype)
+        neg_score = self.predictor(neg_graph, h, etype)
+        
+        return pos_score, neg_score
+    
+    def get_embeddings(self, graph, x):
+        """
+        Get node embeddings for the entire graph
+        """
+        h = self.gnn([graph, graph, graph], x)
+        return {ntype: h[ntype].detach() for ntype in self.node_types}
+
+# Enhanced loss function with margin-based ranking
+def compute_margin_loss(pos_score, neg_score, margin=1.0):
+    """
+    Compute margin-based ranking loss
+    """
+    # Expand dimensions for broadcasting
+    pos_score = pos_score.unsqueeze(1)  # [batch_size, 1]
+    neg_score = neg_score.unsqueeze(0)  # [1, num_neg]
+    
+    # Compute margin loss
+    loss = torch.clamp(margin - pos_score + neg_score, min=0)
+    return loss.mean()
+
+def compute_loss(pos_score, neg_score, loss_type='bce'):
+    """
+    Compute loss with different loss types
+    """
+    if loss_type == 'bce':
+        pos_label = torch.ones_like(pos_score)
+        neg_label = torch.zeros_like(neg_score)
+        scores = torch.cat([pos_score, neg_score])
+        labels = torch.cat([pos_label, neg_label])
+        return F.binary_cross_entropy_with_logits(scores, labels)
+    elif loss_type == 'margin':
+        return compute_margin_loss(pos_score, neg_score)
+    else:
+        raise ValueError(f"Unknown loss type: {loss_type}")

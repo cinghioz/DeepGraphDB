@@ -31,4 +31,15 @@ class GraphDatabaseBase:
     def set_global_to_local_mapping(self, mapping: Dict[Tuple[str, int], int]):
         self.global_to_local_mapping = mapping
         self.reverse_node_mapping = dict(zip(mapping.values(), mapping.keys()))
+
+    def move_to_device(self, device: str):
+        """Move the graph to a specified device."""
+        if self.graph is not None:
+            self.graph = self.graph.to(device)
+            # for key in self.node_data:
+            #     self.node_data[key] = self.node_data[key].to(device)
+            # for key in self.edge_data:
+            #     self.edge_data[key] = self.edge_data[key].to(device)
+        else:
+            raise ValueError("No graph loaded to move to device.")
     

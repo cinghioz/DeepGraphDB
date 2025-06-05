@@ -3,3 +3,5 @@ mixins/__pycache__
 data/
 .venv
 chroma_db
+embeddings/
+models/
