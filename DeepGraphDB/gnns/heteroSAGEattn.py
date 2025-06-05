@@ -271,6 +271,7 @@ class AdvancedHeteroLinkPredictor(nn.Module):
         return {ntype: h[ntype].detach() for ntype in self.node_types}
 
 # Enhanced loss function with margin-based ranking
+#TODO: cuda esplode se la uso
 def compute_margin_loss(pos_score, neg_score, margin=1.0):
     """
     Compute margin-based ranking loss
@@ -280,7 +281,8 @@ def compute_margin_loss(pos_score, neg_score, margin=1.0):
     neg_score = neg_score.unsqueeze(0)  # [1, num_neg]
     
     # Compute margin loss
-    loss = torch.clamp(margin - pos_score + neg_score, min=0)
+    # loss = torch.clamp(margin - pos_score + neg_score, min=0)
+    loss = torch.relu(margin - pos_score + neg_score)
     return loss.mean()
 
 def compute_loss(pos_score, neg_score, loss_type='bce'):

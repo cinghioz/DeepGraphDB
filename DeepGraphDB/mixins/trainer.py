@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, average_precision_score
 import logging
 import os
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -249,9 +250,7 @@ class TrainerMixin:
                 
                 for neg_sample_idx in range(num_neg_samples):
                     # Generate different negative samples for each iteration
-                    neg_graph = self.advanced_negative_sampling(
-                        pos_graph, target_etype, k=1, method='uniform'
-                    ).to(device)
+                    neg_graph = self.advanced_negative_sampling(pos_graph, target_etype, k=1, method='uniform').to(device)
                     
                     # Forward pass
                     pos_score, neg_score = model(pos_graph, neg_graph, blocks, input_features, target_etype)
@@ -276,11 +275,10 @@ class TrainerMixin:
 
         return split_metrics, metrics_std
 
-    def train_model(self, model, loss_f, target_etypes, target_entities, device, batch_size=1000000, num_epochs=10):
+    def train_model(self, model, loss_f, target_etypes, target_entities, device, bs=50000, num_epochs=10):
         self.move_to_device(device)
         model = model.to(device)
 
-        # ==================== NEW: Edge Splitting ====================
         print("\nSplitting edges into train/val/test sets...")
         edge_splits = self.split_edges_consistent(
             target_etypes, 
@@ -300,13 +298,12 @@ class TrainerMixin:
         optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
 
-        # ==================== MODIFIED: Training Loop ====================
         print("Starting training with proper train/val splits...")
         best_val_metrics = { etype: 0.0 for etype in target_etypes }
         patience_counter = 0
         max_patience = 20
 
-        for epoch in range(num_epochs):
+        for epoch in tqdm(range(num_epochs)):
             model.train()
             total_loss = 0
             
@@ -320,7 +317,7 @@ class TrainerMixin:
                 src, dst = train_edges['src'], train_edges['dst']
                 
                 # Create mini-batches
-                batch_size = min(1000000, len(src))
+                batch_size = min(bs, len(src))
                 num_batches = (len(src) + batch_size - 1) // batch_size
                 
                 # TODO: fixxare il dataloder. Questo è un workaround per evitare errori di memoria
@@ -352,8 +349,12 @@ class TrainerMixin:
                     # Forward pass
                     pos_score, neg_score = model(pos_graph, neg_graph, blocks, input_features, target_etype)
                     
+                    del pos_graph, neg_graph, blocks  # Free memory
+                    # torch.cuda.empty_cache()  # Clear cache to avoid memory issues
+
                     # Compute loss
                     loss = loss_f(pos_score, neg_score)
+                    # loss = loss_f(pos_score, neg_score)
                     
                     # Backward pass
                     optimizer.zero_grad()
@@ -363,9 +364,9 @@ class TrainerMixin:
                     
                     total_loss += loss.item()
             
-            if epoch % 5 == 0:  # Evaluate every 5 epochs
+            if (epoch+1) % 10 == 0:  # Evaluate every 10 epochs
                 # Evaluate on validation set
-                val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device)
+                val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device, 10)
                 
                 print(f"\nEpoch {epoch:03d} | Loss: {total_loss:.4f}")
                 
