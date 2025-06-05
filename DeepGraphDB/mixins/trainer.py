@@ -11,7 +11,7 @@ import os
 logger = logging.getLogger(__name__)
 
 class TrainerMixin:
-    def split_edges_consistent(self, target_etypes, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15, random_state=42):
+    def split_edges_consistent(self, target_etypes, train_ratio=0.65, val_ratio=0.15, test_ratio=0.20, random_state=42):
         """
         Split edges consistently across different edge types in a heterogeneous graph.
         
@@ -204,7 +204,6 @@ class TrainerMixin:
             **hit_at_k
         }
 
-    # TODO: fix the return dict
     def evaluate_on_split(self, model, edge_splits, target_etypes, split_name, device, num_neg_samples=5):
         """
         Evaluate model on a specific data split (val or test) using multiple negative samples.
@@ -274,7 +273,7 @@ class TrainerMixin:
             for metric_name in all_metrics[etype]:
                 std_key = f"{etype}_{metric_name}_std"
                 metrics_std[std_key] = np.std(all_metrics[etype][metric_name])
-        
+
         return split_metrics, metrics_std
 
     def train_model(self, model, loss_f, target_etypes, target_entities, device, batch_size=1000000, num_epochs=10):
@@ -324,6 +323,8 @@ class TrainerMixin:
                 batch_size = min(1000000, len(src))
                 num_batches = (len(src) + batch_size - 1) // batch_size
                 
+                # TODO: fixxare il dataloder. Questo è un workaround per evitare errori di memoria
+
                 for batch_idx in range(num_batches):
                     start_idx = batch_idx * batch_size
                     end_idx = min((batch_idx + 1) * batch_size, len(src))
@@ -362,23 +363,29 @@ class TrainerMixin:
                     
                     total_loss += loss.item()
             
-            # ==================== NEW: Validation Evaluation ====================
             if epoch % 5 == 0:  # Evaluate every 5 epochs
                 # Evaluate on validation set
-                val_metrics = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device)
+                val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device)
                 
                 print(f"\nEpoch {epoch:03d} | Loss: {total_loss:.4f}")
                 
                 # Track best validation metrics and calculate average
                 epoch_improved = False
                 epoch_aucs = []
+                epoch_aps = []
+
                 for etype in target_etypes:
-                    if f"{etype}_AUC" in val_metrics:
+                    if f"{etype}_AUC" in val_metrics and f"{etype}_AP" in val_metrics:
                         auc_values = val_metrics[f"{etype}_AUC"]
-                        if auc_values:
+                        ap_values = val_metrics[f"{etype}_AP"]
+
+                        if auc_values and ap_values:
                             avg_auc = np.mean(auc_values)
+                            avg_ap = np.mean(ap_values)
                             epoch_aucs.append(avg_auc)
-                            print(f"  {etype} Val AUC: {avg_auc:.4f}")
+                            epoch_aps.append(avg_ap)
+
+                            print(f"  {etype} Val AUC: {avg_auc:.4f}, AP: {avg_ap:.4f}")
                             
                             if avg_auc > best_val_metrics[etype]:
                                 best_val_metrics[etype] = avg_auc
@@ -388,6 +395,10 @@ class TrainerMixin:
                 if epoch_aucs:
                     avg_auc_all = np.mean(epoch_aucs)
                     print(f"  Average Val AUC: {avg_auc_all:.4f}")
+
+                if epoch_aps:
+                    avg_ap_all = np.mean(epoch_aps)
+                    print(f"  Average Val AP: {avg_ap_all:.4f}")
                 
                 # Early stopping logic
                 if epoch_improved:
@@ -404,11 +415,13 @@ class TrainerMixin:
 
         print("\nTraining completed!")
 
+        self._final_evaluation(model, edge_splits, target_etypes, device)
+
         embs = model.get_embeddings(self.graph, {ntype: self.graph.nodes[ntype].data['x'] for ntype in self.graph.ntypes})
 
         if not os.path.exists('models'):
             os.makedirs('models')
-            
+
         if not os.path.exists('embeddings'):
             os.makedirs('embeddings')
 
@@ -424,49 +437,61 @@ class TrainerMixin:
 
         return embs
 
-        # ==================== NEW: Final Evaluation ====================
-        # print("\n" + "="*50)
-        # print("FINAL EVALUATION")
-        # print("="*50)
+    def _final_evaluation(self, model, edge_splits, target_etypes, device):
+        print("\n" + "="*50)
+        print("FINAL EVALUATION")
+        print("="*50)
 
-        # # Validation set evaluation
-        # print("\nValidation Set Results:")
-        # val_metrics = evaluate_on_split(model, graph, edge_splits, target_etypes, 'val', device)
-        # val_aucs = []
-        # for etype in target_etypes:
-        #     if f"{etype}_AUC" in val_metrics:
-        #         auc_values = val_metrics[f"{etype}_AUC"]
-        #         if auc_values:
-        #             avg_auc = np.mean(auc_values)
-        #             val_aucs.append(avg_auc)
-        #             print(f"  {etype} AUC: {avg_auc:.4f}")
+        # Validation set evaluation
+        print("\nValidation Set Results:")
+        val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device)
+        epoch_aucs = []
+        epoch_aps = []
 
-        # if val_aucs:
-        #     avg_val_auc = np.mean(val_aucs)
-        #     print(f"  Average Val AUC: {avg_val_auc:.4f}")
+        for etype in target_etypes:
+            if f"{etype}_AUC" in val_metrics and f"{etype}_AP" in val_metrics:
+                auc_values = val_metrics[f"{etype}_AUC"]
+                ap_values = val_metrics[f"{etype}_AP"]
 
-        # # Test set evaluation  
-        # print("\nTest Set Results:")
-        # test_metrics = evaluate_on_split(model, graph, edge_splits, target_etypes, 'test', device)
-        # test_aucs = []
-        # for etype in target_etypes:
-        #     if f"{etype}_AUC" in test_metrics:
-        #         auc_values = test_metrics[f"{etype}_AUC"]
-        #         if auc_values:
-        #             avg_auc = np.mean(auc_values)
-        #             test_aucs.append(avg_auc)
-        #             print(f"  {etype} AUC: {avg_auc:.4f}")
+                if auc_values and ap_values:
+                    avg_auc = np.mean(auc_values)
+                    avg_ap = np.mean(ap_values)
+                    epoch_aucs.append(avg_auc)
+                    epoch_aps.append(avg_ap)
 
-        # if test_aucs:
-        #     avg_test_auc = np.mean(test_aucs)
-        #     print(f"  Average Test AUC: {avg_test_auc:.4f}")
+                    print(f"  {etype} Val AUC: {avg_auc:.4f}, AP: {avg_ap:.4f}")
 
-        # print("\nBest validation metrics achieved during training:")
-        # best_val_aucs = []
-        # for etype, best_auc in best_val_metrics.items():
-        #     best_val_aucs.append(best_auc)
-        #     print(f"  {etype}: {best_auc:.4f}")
+        if epoch_aucs:
+            avg_val_auc = np.mean(epoch_aucs)
+            print(f"  Average Val AUC: {avg_val_auc:.4f}")
 
-        # if best_val_aucs:
-        #     avg_best_val_auc = np.mean(best_val_aucs)
-        #     print(f"  Average Best Val AUC: {avg_best_val_auc:.4f}")
+        if epoch_aps:
+            avg_ap_all = np.mean(epoch_aps)
+            print(f"  Average Val AP: {avg_ap_all:.4f}")
+
+        # Test set evaluation  
+        print("\nTest Set Results:")
+        test_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'test', device)
+        epoch_aucs = []
+        epoch_aps = []
+
+        for etype in target_etypes:
+            if f"{etype}_AUC" in test_metrics and f"{etype}_AP" in test_metrics:
+                auc_values = test_metrics[f"{etype}_AUC"]
+                ap_values = test_metrics[f"{etype}_AP"]
+
+                if auc_values and ap_values:
+                    avg_auc = np.mean(auc_values)
+                    avg_ap = np.mean(ap_values)
+                    epoch_aucs.append(avg_auc)
+                    epoch_aps.append(avg_ap)
+
+                    print(f"  {etype} Test AUC: {avg_auc:.4f}, AP: {avg_ap:.4f}")
+
+        if epoch_aucs:
+            avg_val_auc = np.mean(epoch_aucs)
+            print(f"  Average Test AUC: {avg_val_auc:.4f}")
+
+        if epoch_aps:
+            avg_ap_all = np.mean(epoch_aps)
+            print(f"  Average Test AP: {avg_ap_all:.4f}")

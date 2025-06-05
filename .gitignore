@@ -5,3 +5,5 @@ data/
 chroma_db
 embeddings/
 models/
+ChromaVDB/__pycache__
+gnns/__pycache__
