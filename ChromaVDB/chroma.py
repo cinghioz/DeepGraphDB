@@ -35,12 +35,15 @@ class ChromaFramework:
             "text": self.text_collection
         }
 
+        self.global_to_vids_mapping = {}
+
     def create_records(self, 
-                   names: List[str],
-                   entities: Optional[List[Optional[str]]] = [],
-                   metadatas: Optional[List[Optional[Dict[str, Any]]]] = [],
-                   documents: Optional[List[Optional[List[str]]]] = [],
-                   embeddings: Optional[List[Optional[Dict[str, List[float]]]]] = []) -> List[str]:
+                    global_ids: List[int],
+                    names: List[str],
+                    entities: Optional[List[Optional[str]]] = [],
+                    metadatas: Optional[List[Optional[Dict[str, Any]]]] = [],
+                    documents: Optional[List[Optional[List[str]]]] = [],
+                    embeddings: Optional[List[Optional[Dict[str, List[float]]]]] = []) -> List[str]:
         """
         Create multiple new records in the specified collection(s).
         
@@ -89,6 +92,11 @@ class ChromaFramework:
             
             # Prepare document - use name as default if none provided
             record_document = document_list[0] if document_list else name
+
+            if global_ids[i] in self.global_to_vids_mapping:
+                raise ValueError(f"Global id {i} already exists in mapping!")
+                
+            self.global_to_vids_mapping[global_ids[i]] = record_id
             
             # Determine which collections to create records in
             if embeddings:
@@ -156,103 +164,7 @@ class ChromaFramework:
         
         return record_ids
     
-    def create_record(self, 
-                     name: str,
-                     entity: Optional[str] = None,
-                     metadata: Optional[Dict[str, Any]] = None,
-                     documents: Optional[List[str]] = None,
-                     embeddings: Optional[Dict[str, List[float]]] = None) -> str:
-        """
-        Create a new record in the specified collection(s).
-        
-        Args:
-            name: Name of the record (mandatory)
-            entity: Entity associated with the record (defaults to "default" if None)
-            metadata: Optional metadata dictionary
-            documents: Optional list of text documents
-            embeddings: Optional dictionary of embeddings {"graph": [...], "text": [...]}
-        
-        Returns:
-            The record ID (generated or provided)
-        """
-        # Auto-generate ID if not provided
-        record_id = str(uuid.uuid4())
-        
-        # Set default entity if None
-        if entity is None:
-            entity = "default"
-        
-        # Check if record already exists in any collection
-        if self._record_exists(record_id):
-            raise ValueError(f"Record with ID '{record_id}' already exists")
-        
-        # Prepare base record data
-        base_metadata = {
-            "name": name,
-            "entity": entity,
-            "record_id": record_id
-        }
-        
-        if metadata:
-            base_metadata.update(metadata)
-        
-        # Prepare documents - use name as default document if none provided
-        record_documents = documents[0] if documents else name
-        
-        # Determine which collections to create records in
-        collections_to_create = []
-        
-        if embeddings:
-            # Create records in collections specified by embeddings dict
-            for embedding_type, embedding_vector in embeddings.items():
-                if embedding_type in self.collections:
-                    collections_to_create.append((embedding_type, embedding_vector))
-                else:
-                    raise ValueError(f"Invalid embedding type '{embedding_type}'. Must be 'graph' or 'text'")
-        else:
-            # If no embeddings provided, create in both collections with auto-generated embeddings
-            collections_to_create = [("graph", None), ("text", None)]
-        
-        # Create records in specified collections
-        try:
-            for embedding_type, embedding_vector in collections_to_create:
-                collection = self.collections[embedding_type]
-                
-                # Prepare metadata for this collection
-                record_metadata = base_metadata.copy()
-                record_metadata["embedding_type"] = embedding_type
-                
-                if embedding_vector:
-                    # Add with custom embedding
-                    collection.add(
-                        ids=[record_id],
-                        documents=[record_documents],
-                        metadatas=[record_metadata],
-                        embeddings=[embedding_vector]
-                    )
-                else:
-                    # Let ChromaDB auto-generate embedding from document
-                    collection.add(
-                        ids=[record_id],
-                        documents=[record_documents],
-                        metadatas=[record_metadata]
-                    )
-                    
-        except Exception as e:
-            # Cleanup: if any collection failed, try to remove from all collections
-            for embedding_type, _ in collections_to_create:
-                try:
-                    self.collections[embedding_type].delete(ids=[record_id])
-                except Exception:
-                    pass
-            
-            if "already exists" in str(e):
-                raise ValueError(f"Record with ID '{record_id}' already exists")
-            raise e
-        
-        return record_id
-    
-    def read_record(self, record_id: str, include_embeddings: bool = False) -> Optional[Dict[str, Any]]:
+    def read_record(self, record_ids: List[str], include_embeddings: bool = False) -> Optional[List[Dict[str, Any]]]:
         """
         Read a record by its ID from all collections where it exists.
         
@@ -265,22 +177,25 @@ class ChromaFramework:
         """
         found_collections = {}
         record_data = None
+        records = []
         
         # Search in both collections
         for embedding_type, collection in self.collections.items():
             try:
-                result = collection.get(
-                    ids=[record_id],
+                results = collection.get(
+                    ids=[record_ids],
                     include=["documents", "metadatas", "embeddings"] if include_embeddings else ["documents", "metadatas"]
                 )
                 
-                if result['ids']:
-                    metadata = result['metadatas'][0]
+                i = 0
+                for result in results:
+                    if result['ids']:
+                        metadata = result['metadatas'][0]
                     
                     # Initialize record_data on first find
                     if record_data is None:
                         record_data = {
-                            "id": record_id,
+                            "id": record_ids[i],
                             "name": metadata.get('name'),
                             "entity": metadata.get('entity', 'default'),
                             "collections": [],
@@ -296,11 +211,14 @@ class ChromaFramework:
                     
                     if include_embeddings and "embeddings" in result:
                         record_data["embeddings"][embedding_type] = result['embeddings'][0]
+
+                    i += 1
+                    records.append(record_data)
                     
             except Exception:
                 continue
         
-        return record_data
+        return records
     
     def update_record(self, 
                      record_id: str,
@@ -458,21 +376,24 @@ class ChromaFramework:
         
         return records
     
+    # TODO: add filtering by docs
     def search_records(self, 
                       query: List[float] | str, 
                       embedding_type: str,
                       n_results: int = 5,
                       entity: Optional[str] = None,
-                      where: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+                      where: Optional[Dict[str, Any]] = None,
+                      where_docs: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
         Search for records using similarity search in specified collection.
         
         Args:
-            query_text: Text to search for
+            query: Text to search for | embsedding vector to search with
             embedding_type: Collection to search in ("graph" or "text")
             n_results: Maximum number of results to return
             entity: Filter by entity (None for all entities)
             where: Additional metadata filter conditions
+            where_docs: Additional document filter conditions
         
         Returns:
             List of matching records with similarity scores

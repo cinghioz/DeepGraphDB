@@ -62,13 +62,39 @@ class CrudMixin:
         num_new_nodes = len(nodes_df)
         new_total_nodes = current_num_nodes + num_new_nodes
         
-        # Generate new global IDs (consecutive from current max)
-        if len(self.global_to_local_mapping) > 0:
-            next_global_id = max(self.global_to_local_mapping.keys()) + 1
-        else:
-            next_global_id = 0
+        # # Generate new global IDs (consecutive from current max)
+        # if len(self.global_to_local_mapping) > 0:
+        #     next_global_id = max(self.global_to_local_mapping.keys()) + 1
+        # else:
+        #     next_global_id = 0
         
-        new_global_ids = list(range(next_global_id, next_global_id + num_new_nodes))
+        # new_global_ids = list(range(next_global_id, next_global_id + num_new_nodes))
+        # new_local_ids = list(range(current_num_nodes, new_total_nodes))
+
+        if len(self.global_to_local_mapping) > 0:
+            existing_global_ids = set(self.global_to_local_mapping.keys())
+            max_global_id = max(existing_global_ids)
+            
+            # Find holes in the range [0, max_global_id]
+            all_possible_ids = set(range(max_global_id + 1))
+            holes = sorted(list(all_possible_ids - existing_global_ids))
+            
+            # Use holes first, then continue with new IDs
+            new_global_ids = []
+            
+            # Fill holes first
+            holes_to_use = min(len(holes), num_new_nodes)
+            new_global_ids.extend(holes[:holes_to_use])
+            
+            # If we need more IDs after filling holes
+            remaining_nodes = num_new_nodes - holes_to_use
+            if remaining_nodes > 0:
+                next_global_id = max_global_id + 1
+                new_global_ids.extend(range(next_global_id, next_global_id + remaining_nodes))
+        else:
+            # No existing nodes, start from 0
+            new_global_ids = list(range(num_new_nodes))
+
         new_local_ids = list(range(current_num_nodes, new_total_nodes))
         
         # Create new graph with additional nodes (preserve existing edges)
@@ -141,14 +167,41 @@ class CrudMixin:
         num_new_nodes = len(nodes_df)
         new_total_nodes = current_num_nodes + num_new_nodes
         
-        # Generate new global IDs
+        # Generate new global IDs by filling holes first
         if len(self.global_to_local_mapping) > 0:
-            next_global_id = max(self.global_to_local_mapping.keys()) + 1
+            existing_global_ids = set(self.global_to_local_mapping.keys())
+            max_global_id = max(existing_global_ids)
+            
+            # Find holes in the range [0, max_global_id]
+            all_possible_ids = set(range(max_global_id + 1))
+            holes = sorted(list(all_possible_ids - existing_global_ids))
+            
+            # Use holes first, then continue with new IDs
+            new_global_ids = []
+            
+            # Fill holes first
+            holes_to_use = min(len(holes), num_new_nodes)
+            new_global_ids.extend(holes[:holes_to_use])
+            
+            # If we need more IDs after filling holes
+            remaining_nodes = num_new_nodes - holes_to_use
+            if remaining_nodes > 0:
+                next_global_id = max_global_id + 1
+                new_global_ids.extend(range(next_global_id, next_global_id + remaining_nodes))
         else:
-            next_global_id = 0
-        
-        new_global_ids = list(range(next_global_id, next_global_id + num_new_nodes))
+            # No existing nodes, start from 0
+            new_global_ids = list(range(num_new_nodes))
+
         new_local_ids = list(range(current_num_nodes, new_total_nodes))
+
+        # # Generate new global IDs
+        # if len(self.global_to_local_mapping) > 0:
+        #     next_global_id = max(self.global_to_local_mapping.keys()) + 1
+        # else:
+        #     next_global_id = 0
+        
+        # new_global_ids = list(range(next_global_id, next_global_id + num_new_nodes))
+        # new_local_ids = list(range(current_num_nodes, new_total_nodes))
         
         # Create new node count dictionary
         new_num_nodes_dict = {}
@@ -270,7 +323,7 @@ class CrudMixin:
             result = self._bulk_delete_nodes_heterogeneous(delete_set, preserve_edges)
         
         # Recompute all ID mappings with consecutive numbering
-        self._recompute_id_mappings()
+        # self._recompute_id_mappings()
         
         deletion_time = time.time() - start_time
         result['deletion_time'] = deletion_time
