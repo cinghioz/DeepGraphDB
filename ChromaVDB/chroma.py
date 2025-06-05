@@ -27,8 +27,8 @@ class ChromaFramework:
             self.client = chromadb.Client()
         
         # Create two collections
-        self.graph_collection = self.client.get_or_create_collection(name="graph")
-        self.text_collection = self.client.get_or_create_collection(name="text")
+        self.graph_collection = self.client.get_or_create_collection(name="graph", configuration={ "hnsw": { "space": "cosine" } })
+        self.text_collection = self.client.get_or_create_collection(name="text", configuration={ "hnsw": { "space": "cosine" } })
         
         self.collections = {
             "graph": self.graph_collection,
@@ -76,7 +76,6 @@ class ChromaFramework:
             entity = entities[i] if entities[i] is not None else "default"
             metadata = metadatas[i] or {}
             document_list = documents[i]
-            embedding_dict = embeddings.keys()
             
             record_id = record_ids[i]
             
@@ -92,9 +91,9 @@ class ChromaFramework:
             record_document = document_list[0] if document_list else name
             
             # Determine which collections to create records in
-            if embedding_dict:
+            if embeddings:
                 # Create records in collections specified by embeddings dict
-                for embedding_type, embedding_vector in embedding_dict.items():
+                for embedding_type, embedding_vector in embeddings.items():
                     if embedding_type not in self.collections:
                         raise ValueError(f"Invalid embedding type '{embedding_type}'. Must be 'graph' or 'text'")
                     
@@ -106,7 +105,7 @@ class ChromaFramework:
                     collections_data[embedding_type]["ids"].append(record_id)
                     collections_data[embedding_type]["documents"].append(record_document)
                     collections_data[embedding_type]["metadatas"].append(record_metadata)
-                    collections_data[embedding_type]["embeddings"].append(embedding_vector)
+                    collections_data[embedding_type]["embeddings"].append(embedding_vector[i].numpy())
             else:
                 # If no embeddings provided, create in both collections with auto-generated embeddings
                 for embedding_type in ["graph", "text"]:
@@ -381,7 +380,7 @@ class ChromaFramework:
         
         return success
     
-    def delete_record(self, record_id: str) -> bool:
+    def delete_records(self, record_id: List[str]) -> bool:
         """
         Delete a record by its ID from any collection.
         
@@ -395,7 +394,7 @@ class ChromaFramework:
         deleted = False
         for collection in self.collections.values():
             try:
-                collection.delete(ids=[record_id])
+                collection.delete(ids=record_id)
                 deleted = True
             except Exception:
                 continue
@@ -460,7 +459,7 @@ class ChromaFramework:
         return records
     
     def search_records(self, 
-                      query_text: str, 
+                      query: List[float] | str, 
                       embedding_type: str,
                       n_results: int = 5,
                       entity: Optional[str] = None,
@@ -489,12 +488,20 @@ class ChromaFramework:
             where_clause["entity"] = entity
         
         try:
-            result = collection.query(
-                query_texts=[query_text],
-                n_results=n_results,
-                where=where_clause if where_clause else None,
-                include=["documents", "metadatas", "distances", "embeddings"]
-            )
+            if isinstance(query, str):
+                result = collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                    where=where_clause if where_clause else None,
+                    include=["documents", "metadatas", "distances", "embeddings"]
+                )
+            else:
+                result = collection.query(
+                    query_embeddings=query,
+                    n_results=n_results,
+                    where=where_clause if where_clause else None,
+                    include=["documents", "metadatas", "distances", "embeddings"]
+                )
             
             records = []
             for i, record_id in enumerate(result['ids'][0]):
