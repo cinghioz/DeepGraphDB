@@ -196,6 +196,8 @@ class ChromaFramework:
                     ids=record_ids,
                     include=["documents", "metadatas", "embeddings"] if include_embeddings else ["documents", "metadatas"]
                 )
+
+                print(results)
                 
                 i = 0
                 for result in results:
