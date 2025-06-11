@@ -276,13 +276,13 @@ def compute_margin_loss(pos_score, neg_score, margin=1.0):
     """
     Compute margin-based ranking loss
     """
-    # Expand dimensions for broadcasting
+    # Expand dimensions
     pos_score = pos_score.unsqueeze(1)  # [batch_size, 1]
     neg_score = neg_score.unsqueeze(0)  # [1, num_neg]
     
-    # Compute margin loss
-    # loss = torch.clamp(margin - pos_score + neg_score, min=0)
-    loss = torch.relu(margin - pos_score + neg_score)
+    # Compute margin loss 
+    loss = torch.clamp(margin - pos_score + neg_score, min=0)
+    # loss = torch.relu(margin - pos_score + neg_score)
     return loss.mean()
 
 def compute_loss(pos_score, neg_score, loss_type='bce'):

@@ -12,7 +12,7 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 class TrainerMixin:
-    def split_edges_consistent(self, target_etypes, train_ratio=0.65, val_ratio=0.15, test_ratio=0.20, random_state=42):
+    def split_edges_consistent(self, target_etypes, train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, random_state=42):
         """
         Split edges consistently across different edge types in a heterogeneous graph.
         
@@ -224,7 +224,7 @@ class TrainerMixin:
         """
         model.eval()
         split_metrics = defaultdict(list)
-        all_metrics = defaultdict(lambda: defaultdict(list))  # For calculating std
+        all_metrics = defaultdict(lambda: defaultdict(list)) 
         
         with torch.no_grad():
             for target_etype in target_etypes:
@@ -275,16 +275,16 @@ class TrainerMixin:
 
         return split_metrics, metrics_std
 
-    def train_model(self, model, loss_f, target_etypes, target_entities, device, bs=50000, num_epochs=10):
+    def train_model(self, model, loss_f, target_etypes, target_entities, device, bs=500000, num_epochs=100):
         self.move_to_device(device)
         model = model.to(device)
 
         print("\nSplitting edges into train/val/test sets...")
         edge_splits = self.split_edges_consistent(
             target_etypes, 
-            train_ratio=0.7, 
+            train_ratio=0.65, 
             val_ratio=0.15, 
-            test_ratio=0.15,
+            test_ratio=0.20,
             random_state=42
         )
 
@@ -354,7 +354,6 @@ class TrainerMixin:
 
                     # Compute loss
                     loss = loss_f(pos_score, neg_score)
-                    # loss = loss_f(pos_score, neg_score)
                     
                     # Backward pass
                     optimizer.zero_grad()
@@ -371,7 +370,7 @@ class TrainerMixin:
                 print(f"\nEpoch {epoch:03d} | Loss: {total_loss:.4f}")
                 
                 # Track best validation metrics and calculate average
-                epoch_improved = False
+                epoch_improved = True
                 epoch_aucs = []
                 epoch_aps = []
 
