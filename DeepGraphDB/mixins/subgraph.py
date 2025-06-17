@@ -1,16 +1,17 @@
 import dgl
 import torch
-from typing import Dict, List, Set, Tuple, Any
+from typing import Dict, List, Set, Tuple, Any, Optional
 from collections import defaultdict
 import time
 import logging
 
 logger = logging.getLogger(__name__)
 
+# TODO: Da fixxare subgraph_extract: troppi nodi nel risultato
 class SubgraphMixin:
     def extract_subgraph(self, seed_nodes: List[int], k: int, 
                         edge_types: List[Tuple[str, str, str]] = None,
-                        include_features: bool = True) -> dgl.DGLGraph:
+                        include_features: bool = True, max_neighbors_per_hop: Optional[List[int]] = None) -> dgl.DGLGraph:
         """
         Extract k-hop subgraph around seed nodes with proper node mapping.
         
@@ -24,13 +25,14 @@ class SubgraphMixin:
             DGL subgraph with proper node ID mapping
         """
         # Get all nodes within k hops
-        k_hop_nodes = self.get_k_hop_neighbors(seed_nodes, k, edge_types)
+        k_hop_nodes = self.get_k_hop_neighbors(seed_nodes, k, edge_types, max_neighbors=max_neighbors_per_hop)
         all_nodes = set().union(*k_hop_nodes.values())
+        print(len(all_nodes))
         
         if not self.is_heterogeneous():
             return self._extract_subgraph_homogeneous(all_nodes, include_features)
         else:
-            return self._extract_subgraph_heterogeneous(all_nodes, include_features)
+            return self._extract_subgraph_heterogeneous(all_nodes, include_features, max_neighbors_per_hop=max_neighbors_per_hop)
     
     def _extract_subgraph_homogeneous(self, node_set: Set[int], include_features: bool) -> dgl.DGLGraph:
         """Extract homogeneous subgraph."""
@@ -49,7 +51,7 @@ class SubgraphMixin:
 
     def _extract_subgraph_heterogeneous(self, seed_nodes: List[int], k: int, 
                       edge_types: List[Tuple[str, str, str]] = None,
-                      bidirectional: bool = True):
+                      bidirectional: bool = True, max_neighbors_per_hop: Optional[List[int]] = None):
         """
         Extract k-hop heterogeneous subgraph around seed nodes using global IDs.
         
@@ -62,8 +64,7 @@ class SubgraphMixin:
         Returns:
             DGL subgraph containing all nodes within k hops
         """
-        # Get all nodes within k hops
-        k_hop_result = self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional)
+        k_hop_result = self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional, max_neighbors_per_hop=max_neighbors_per_hop)
         
         # Collect all nodes (from all hops)
         all_global_nodes = set()

@@ -176,62 +176,100 @@ class ChromaFramework:
     
     def read_record(self, record_ids: List[str], include_embeddings: bool = False) -> Optional[List[Dict[str, Any]]]:
         """
-        Read a record by its ID from all collections where it exists.
-        
+        Read records by their IDs from all collections where they exist.
         Args:
-            record_id: The unique identifier of the record
+            record_ids: List of unique identifiers of the records
             include_embeddings: Whether to include embeddings in the result
-        
         Returns:
-            Dictionary containing the record data or None if not found
+            List of dictionaries containing the record data or empty list if none found
         """
-        found_collections = {}
-        record_data = None
-        records = []
+        records_found = {}  # Track records by ID to merge collection data
         
-        # Search in both collections
+        # Search in all collections
         for embedding_type, collection in self.collections.items():
             try:
                 results = collection.get(
                     ids=record_ids,
                     include=["documents", "metadatas", "embeddings"] if include_embeddings else ["documents", "metadatas"]
                 )
-
-                print(results)
                 
-                i = 0
-                for result in results:
-                    if result['ids']:
-                        metadata = result['metadatas'][0]
-                    
-                    # Initialize record_data on first find
-                    if record_data is None:
-                        record_data = {
-                            "id": record_ids[i],
-                            "name": metadata.get('name'),
-                            "entity": metadata.get('entity', 'default'),
-                            "collections": [],
-                            "documents": [result['documents'][0]] if result['documents'] else [],
-                            "metadata": {k: v for k, v in metadata.items() 
-                                       if k not in ['name', 'entity', 'record_id', 'embedding_type', 'auto_counter']}
-                        }
-                        if include_embeddings:
-                            record_data["embeddings"] = {}
-                    
-                    # Add collection info
-                    record_data["collections"].append(embedding_type)
-                    
-                    if include_embeddings and "embeddings" in result:
-                        record_data["embeddings"][embedding_type] = result['embeddings'][0]
+                # Check if any records were found in this collection
+                if results.get('ids') and len(results['ids']) > 0:
+                    # Process each found record
+                    for i, record_id in enumerate(results['ids']):
+                        # Get the data for this specific record
+                        metadata = results['metadatas'][i] if results.get('metadatas') and i < len(results['metadatas']) else {}
+                        document = results['documents'][i] if results.get('documents') and i < len(results['documents']) else None
+                        
+                        # Handle embedding - check if embeddings exist and have data
+                        embedding = None
 
-                    i += 1
-                    records.append(record_data)
-                    
-            except Exception:
+                        if include_embeddings and i < len(results['embeddings']):
+                            emb = results['embeddings'][i]
+                            # Check if embedding is valid (not None and has data)
+                            try:
+                                # Check if it's not None first
+                                if emb is not None:
+                                    # For numpy arrays or lists, check if it has any elements
+                                    if hasattr(emb, '__len__'):
+                                        if len(emb) > 0:
+                                            embedding = emb
+                                    else:
+                                        # For scalar values
+                                        embedding = emb
+                            except Exception as e:
+                                # If any error checking the embedding, skip it
+                                print(f"Error processing embedding: {e}")
+                                embedding = None
+                        
+                        if record_id in records_found:
+                            # Add this collection's data to existing record
+                            existing_record = records_found[record_id]
+                            existing_record["collections"].append(embedding_type)
+                            if document is not None:
+                                # Safely check if document already exists
+                                doc_exists = False
+                                try:
+                                    doc_exists = document in existing_record["documents"]
+                                except:
+                                    # If comparison fails, just add it
+                                    doc_exists = False
+                                
+                                if not doc_exists:
+                                    existing_record["documents"].append(document)
+                                    
+                            if include_embeddings and embedding is not None:
+                                if "embeddings" not in existing_record:
+                                    existing_record["embeddings"] = {}
+                                existing_record["embeddings"][embedding_type] = embedding
+                        else:
+                            # Create new record entry
+                            record_data = {
+                                "id": record_id,
+                                "name": metadata.get('name'),
+                                "entity": metadata.get('entity', 'default'),
+                                "collections": [embedding_type],
+                                "documents": [document] if document else [],
+                                "metadata": {k: v for k, v in metadata.items()
+                                        if k not in ['name', 'entity', 'record_id', 'embedding_type', 'auto_counter']}
+                            }
+                            
+                            if include_embeddings:
+                                record_data["embeddings"] = {}
+                                if embedding is not None:
+                                    record_data["embeddings"][embedding_type] = embedding
+                            
+                            records_found[record_id] = record_data
+                            
+            except Exception as e:
+                # Log the exception for debugging
+                print(f"Error processing collection {embedding_type}: {e}")
                 continue
         
+        # Convert the dictionary values to a list
+        records = list(records_found.values())
         return records
-    
+
     def update_record(self, 
                      record_id: str,
                      name: Optional[str] = None,
