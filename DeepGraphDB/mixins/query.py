@@ -2,6 +2,7 @@ import torch
 import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional, Union
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +122,57 @@ class QueryMixin:
             for feat in return_features:
                 if feat in self.graph.ndata:
                     result[feat] = self.graph.ndata[feat][matching_nodes]
+        
+        return result
+
+    def query_nodes_by_nodedata(        
+        self,
+        entity_type: str | None,
+        feature_name: str,
+        condition: str,
+        value: Union[float, int, List]
+    )  -> Dict[str, torch.Tensor]:
+        """
+        Fast vectorized node querying by nodedata conditions.
+        
+        Args:
+            feature_name: Name of the feature to query on
+            condition: One of 'eq', 'gt', 'lt', 'gte', 'lte', 'in', 'between'
+            value: Value(s) to compare against
+            return_features: List of features to return for matching nodes
+        
+        Returns:
+            Dict with 'node_ids' and requested features
+        """
+        if feature_name not in self.graph.ndata:
+            raise ValueError(f"Feature {feature_name} not found in node data")
+        
+        feature_tensor = self.node_data[entity_type][feature_name]
+        
+        # Vectorized condition evaluation
+        if condition == 'eq':
+            mask = feature_tensor == value
+        elif condition == 'gt':
+            mask = feature_tensor > value
+        elif condition == 'lt':
+            mask = feature_tensor < value
+        elif condition == 'gte':
+            mask = feature_tensor >= value
+        elif condition == 'lte':
+            mask = feature_tensor <= value
+        elif condition == 'in':
+            mask = [index for index,item in enumerate(feature_tensor.tolist()) if value in item]
+        elif condition == 'between':
+            if len(value) != 2:
+                raise ValueError("'between' condition requires list of 2 values")
+            mask = (feature_tensor >= value[0]) & (feature_tensor <= value[1])
+        else:
+            raise ValueError(f"Unsupported condition: {condition}")
+        
+        # Get matching node IDs
+        matching_nodes = [self.reverse_node_mapping[(entity_type, index)] for index in mask]
+        
+        result = {'node_ids': matching_nodes, 'node_values': feature_tensor[mask]}
         
         return result
     
