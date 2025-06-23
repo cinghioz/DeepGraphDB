@@ -364,7 +364,7 @@ class TrainerMixin:
                     total_loss += loss.item()
             
             if (epoch+1) % 10 == 0:  # Evaluate every 10 epochs
-                # Evaluate on validation set
+                # Evaluate on validation set (val on 10 different negative graph)
                 val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device, 10)
                 
                 print(f"\nEpoch {epoch:03d} | Loss: {total_loss:.4f}")

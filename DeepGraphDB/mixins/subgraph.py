@@ -7,7 +7,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# TODO: Da fixxare subgraph_extract: troppi nodi nel risultato
 class SubgraphMixin:
     def extract_subgraph(self, seed_nodes: List[int], k: int, 
                         edge_types: List[Tuple[str, str, str]] = None,
@@ -26,13 +25,11 @@ class SubgraphMixin:
         """
         # Get all nodes within k hops
         k_hop_nodes = self.get_k_hop_neighbors(seed_nodes, k, edge_types, max_neighbors=max_neighbors_per_hop)
-        all_nodes = set().union(*k_hop_nodes.values())
-        print(len(all_nodes))
         
         if not self.is_heterogeneous():
-            return self._extract_subgraph_homogeneous(all_nodes, include_features)
+            return self._extract_subgraph_homogeneous(k_hop_nodes, include_features)
         else:
-            return self._extract_subgraph_heterogeneous(all_nodes, include_features, max_neighbors_per_hop=max_neighbors_per_hop)
+            return self._extract_subgraph_heterogeneous(k_hop_nodes, include_features)
     
     def _extract_subgraph_homogeneous(self, node_set: Set[int], include_features: bool) -> dgl.DGLGraph:
         """Extract homogeneous subgraph."""
@@ -49,9 +46,7 @@ class SubgraphMixin:
         
         return subgraph
 
-    def _extract_subgraph_heterogeneous(self, seed_nodes: List[int], k: int, 
-                      edge_types: List[Tuple[str, str, str]] = None,
-                      bidirectional: bool = True, max_neighbors_per_hop: Optional[List[int]] = None):
+    def _extract_subgraph_heterogeneous(self, k_hop_result: Dict[int, List[int]], include_features: bool):
         """
         Extract k-hop heterogeneous subgraph around seed nodes using global IDs.
         
@@ -64,7 +59,7 @@ class SubgraphMixin:
         Returns:
             DGL subgraph containing all nodes within k hops
         """
-        k_hop_result = self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional, max_neighbors_per_hop=max_neighbors_per_hop)
+        # k_hop_result = self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional, max_neighbors_per_hop=max_neighbors_per_hop)
         
         # Collect all nodes (from all hops)
         all_global_nodes = set()
@@ -73,10 +68,13 @@ class SubgraphMixin:
         
         # Convert to local IDs organized by node type
         nodes_by_type = defaultdict(list)
+        gids_by_type = defaultdict(list)
+        
         for global_id in all_global_nodes:
             if global_id in self.global_to_local_mapping:
                 node_type, local_id = self.global_to_local_mapping[global_id]
                 nodes_by_type[node_type].append(local_id)
+                gids_by_type[node_type].append(global_id)
         
         # Create subgraph
         if len(self.graph.ntypes) == 1:
@@ -96,7 +94,7 @@ class SubgraphMixin:
                 # Return empty subgraph if no valid nodes
                 subgraph = None
         
-        return subgraph, k_hop_result
+        return subgraph, k_hop_result, gids_by_type
     
     # =============================================================================
     # 4.1 EFFICIENT SUBGRAPH MERGE #TODO: test more and check

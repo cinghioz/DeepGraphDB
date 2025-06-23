@@ -24,7 +24,8 @@ class NeighborhoodMixin:
                           edge_types: List[Tuple[str, str, str]] = None,
                           bidirectional: bool = True,
                           max_neighbors: Optional[Union[int, List[int]]] = None,
-                          random_seed: Optional[int] = None) -> Dict[int, Set[int]]:
+                          random_seed: Optional[int] = None,
+                          flat: Optional[bool] = False) -> Dict[int, Set[int]] | Set[int]:
         """
         Get k-hop neighbors efficiently using BFS with optional random sampling per node.
         
@@ -55,7 +56,7 @@ class NeighborhoodMixin:
         if not self.is_heterogeneous():
             return self._get_k_hop_homogeneous(seed_nodes, k, bidirectional, max_neighbors_per_hop)
         else:
-            return self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional, max_neighbors_per_hop)
+            return self._get_k_hop_heterogeneous(seed_nodes, k, edge_types, bidirectional, max_neighbors_per_hop, flat)
     
     def _process_max_neighbors_param(self, max_neighbors: Optional[Union[int, List[int]]], k: int) -> Optional[List[int]]:
         """
@@ -140,7 +141,8 @@ class NeighborhoodMixin:
     def _get_k_hop_heterogeneous(self, seed_nodes: List[int], k: int, 
                              edge_types: List[Tuple[str, str, str]] = None, 
                              bidirectional: bool = True,
-                             max_neighbors_per_hop: Optional[List[int]] = None) -> Dict[int, Set[int]]:
+                             max_neighbors_per_hop: Optional[List[int]] = None, 
+                             flat: Optional[bool] = False) -> Dict[int, Set[int]] | Set[int]:
         """
         Get k-hop neighbors for heterogeneous graphs using global node IDs with per-node sampling.
         
@@ -161,7 +163,11 @@ class NeighborhoodMixin:
             edge_types = self.graph.canonical_etypes
         
         # Result dictionary
-        result = {0: set(seed_nodes)}
+        if flat:
+            result = set(seed_nodes)
+        else:
+            result = {0: set(seed_nodes)}
+
         visited_global = set(seed_nodes)
         
         # Convert seed nodes to local IDs organized by node type
@@ -247,7 +253,10 @@ class NeighborhoodMixin:
                 break
             
             # Update results and visited set
-            result[hop] = global_next
+            if flat:
+                result = result | global_next
+            else:
+                result[hop] = global_next
             visited_global.update(global_next)
             current_frontier_by_type = next_frontier_by_type
         
