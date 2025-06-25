@@ -19,6 +19,8 @@ class UtilityMixin:
         metadata = {
             'node_data': self.node_data,
             'edge_data': self.edge_data,
+            'node_types_mapping': self.node_types_mapping,
+            'edge_types_mapping': self.edge_types_mapping,
             'global_to_local_mapping': self.global_to_local_mapping,
             'reverse_node_mapping': self.reverse_node_mapping
         }
@@ -38,6 +40,8 @@ class UtilityMixin:
                 metadata = pickle.load(f)
                 self.node_data = metadata.get('node_data', {})
                 self.edge_data = metadata.get('edge_data', {})
+                self.node_types_mapping = metadata.get('node_types_mapping', {})
+                self.edge_types_mapping = metadata.get('edge_types_mapping', {})
                 self.global_to_local_mapping = metadata.get('global_to_local_mapping', {})
                 self.reverse_node_mapping = metadata.get('reverse_node_mapping', {})
         except FileNotFoundError:

@@ -282,9 +282,9 @@ class TrainerMixin:
         print("\nSplitting edges into train/val/test sets...")
         edge_splits = self.split_edges_consistent(
             target_etypes, 
-            train_ratio=0.65, 
+            train_ratio=0.70, 
             val_ratio=0.15, 
-            test_ratio=0.20,
+            test_ratio=0.15,
             random_state=42
         )
 
@@ -296,12 +296,12 @@ class TrainerMixin:
 
         # Training configuration
         optimizer = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=50, factor=0.5)
 
         print("Starting training with proper train/val splits...")
         best_val_metrics = { etype: 0.0 for etype in target_etypes }
         patience_counter = 0
-        max_patience = 20
+        max_patience = 30
 
         for epoch in tqdm(range(num_epochs)):
             model.train()
@@ -363,7 +363,7 @@ class TrainerMixin:
                     
                     total_loss += loss.item()
             
-            if (epoch+1) % 10 == 0:  # Evaluate every 10 epochs
+            if (epoch+1) % 30 == 0:  # Evaluate every 10 epochs
                 # Evaluate on validation set (val on 10 different negative graph)
                 val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device, 10)
                 

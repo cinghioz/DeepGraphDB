@@ -81,7 +81,7 @@ class HeteroGraphSAGE(nn.Module):
                 ) for ntype in node_types
             })
         
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.3)
         
     def forward(self, blocks, x):
         h = {}
