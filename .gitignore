@@ -10,3 +10,4 @@ gnns/__pycache__
 start_feats.pt
 model.pt
 DeepGraphDB/graphs
+best_nbfnet_model.pth
