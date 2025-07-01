@@ -38,8 +38,6 @@ class HeteroGraphSAGE(nn.Module):
             ntype: nn.Linear(in_feats[ntype] if isinstance(in_feats, dict) else in_feats, hidden_feats)
             for ntype in node_types
         })
-
-        print(self.input_proj)
         
         # GraphSAGE layers
         self.sage_layers = nn.ModuleList()
