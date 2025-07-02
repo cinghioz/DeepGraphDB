@@ -150,24 +150,68 @@ class TrainerMixin:
         else:
             raise ValueError(f"Unknown negative sampling method: {method}")
 
+    # def negative_sampling(self, graph, etype, k=1):
+    #     """
+    #     Standard negative sampling implementation using manual sampling
+    #     """
+    #     src_type, _, dst_type = etype
+    #     src, dst = graph.edges(etype=etype)
+        
+    #     # Manual negative sampling
+    #     num_pos_edges = len(src)
+    #     num_neg_edges = num_pos_edges * k
+        
+    #     # Sample negative source nodes (same as positive)
+    #     neg_src = src.repeat_interleave(k)
+        
+    #     # Sample negative destination nodes uniformly
+    #     num_dst_nodes = graph.num_nodes(dst_type)
+    #     neg_dst = torch.randint(0, num_dst_nodes, (num_neg_edges,), device=src.device)
+        
+    #     # Create negative graph
+    #     neg_graph = dgl.heterograph(
+    #         {etype: (neg_src, neg_dst)},
+    #         num_nodes_dict={ntype: graph.num_nodes(ntype) for ntype in graph.ntypes}
+    #     )
+        
+    #     return neg_graph
+
     def negative_sampling(self, graph, etype, k=1):
         """
-        Standard negative sampling implementation using manual sampling
+        Negative sampling implementation that selects destination nodes
+        that do not appear in the real destination tensor.
         """
         src_type, _, dst_type = etype
         src, dst = graph.edges(etype=etype)
         
-        # Manual negative sampling
+        # Get all unique destination nodes from the positive edges
+        unique_dst = torch.unique(dst)
+        num_dst_nodes = graph.num_nodes(dst_type)
+        
+        # Create a boolean mask to identify nodes that are NOT in the unique_dst tensor
+        # is_candidate will be True for nodes that can be used as negative samples
+        is_candidate = torch.ones(num_dst_nodes, dtype=torch.bool, device=src.device)
+        is_candidate[unique_dst] = False
+        
+        # Get the tensor of candidate destination nodes
+        candidate_neg_dst = torch.arange(num_dst_nodes, device=src.device)[is_candidate]
+        
         num_pos_edges = len(src)
         num_neg_edges = num_pos_edges * k
         
         # Sample negative source nodes (same as positive)
         neg_src = src.repeat_interleave(k)
         
-        # Sample negative destination nodes uniformly
-        num_dst_nodes = graph.num_nodes(dst_type)
-        neg_dst = torch.randint(0, num_dst_nodes, (num_neg_edges,), device=src.device)
-        
+        # Check if there are any candidate nodes to sample from
+        if len(candidate_neg_dst) > 0:
+            # Sample with replacement from the candidate negative destination nodes
+            neg_dst_indices = torch.randint(0, len(candidate_neg_dst), (num_neg_edges,), device=src.device)
+            neg_dst = candidate_neg_dst[neg_dst_indices]
+        else:
+            # Fallback: If all nodes are destination nodes in the graph,
+            # revert to uniform random sampling.
+            neg_dst = torch.randint(0, num_dst_nodes, (num_neg_edges,), device=src.device)
+            
         # Create negative graph
         neg_graph = dgl.heterograph(
             {etype: (neg_src, neg_dst)},
@@ -301,7 +345,7 @@ class TrainerMixin:
         print("Starting training with proper train/val splits...")
         best_val_metrics = { etype: 0.0 for etype in target_etypes }
         patience_counter = 0
-        max_patience = 30
+        max_patience = 50
 
         for epoch in tqdm(range(num_epochs)):
             model.train()
@@ -363,7 +407,7 @@ class TrainerMixin:
                     
                     total_loss += loss.item()
             
-            if (epoch+1) % 30 == 0:  # Evaluate every 10 epochs
+            if (epoch+1) % 30 == 0:  # Evaluate every 30 epochs
                 # Evaluate on validation set (val on 10 different negative graph)
                 val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device, 10)
                 
