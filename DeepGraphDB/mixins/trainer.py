@@ -178,46 +178,51 @@ class TrainerMixin:
 
     def negative_sampling(self, graph, etype, k=1):
         """
-        Negative sampling implementation that selects destination nodes
-        that do not appear in the real destination tensor.
+        Negative sampling that selects destination nodes that do not appear
+        in either the source or destination tensors of the real edges for the given etype.
         """
         src_type, _, dst_type = etype
         src, dst = graph.edges(etype=etype)
-        
-        # Get all unique destination nodes from the positive edges
-        unique_dst = torch.unique(dst)
+
+        # By default, we only exclude the true destination nodes.
+        nodes_to_exclude = torch.unique(dst)
+
+        # If the source and destination nodes are of the same type, we should
+        # also exclude the source nodes from the candidate pool.
+        if src_type == dst_type:
+            all_involved_nodes = torch.cat([src, dst])
+            nodes_to_exclude = torch.unique(all_involved_nodes)
+
+        # --- The rest of the logic remains the same ---
+
         num_dst_nodes = graph.num_nodes(dst_type)
-        
-        # Create a boolean mask to identify nodes that are NOT in the unique_dst tensor
-        # is_candidate will be True for nodes that can be used as negative samples
+
+        # Create a boolean mask to identify nodes that can be used as negative samples.
         is_candidate = torch.ones(num_dst_nodes, dtype=torch.bool, device=src.device)
-        is_candidate[unique_dst] = False
-        
-        # Get the tensor of candidate destination nodes
+        # Ensure we only try to index with valid node IDs.
+        valid_nodes_to_exclude = nodes_to_exclude[nodes_to_exclude < num_dst_nodes]
+        is_candidate[valid_nodes_to_exclude] = False
+
         candidate_neg_dst = torch.arange(num_dst_nodes, device=src.device)[is_candidate]
-        
+
         num_pos_edges = len(src)
         num_neg_edges = num_pos_edges * k
-        
-        # Sample negative source nodes (same as positive)
         neg_src = src.repeat_interleave(k)
-        
-        # Check if there are any candidate nodes to sample from
+
+        # Sample from candidates or fall back to uniform sampling if the pool is empty.
         if len(candidate_neg_dst) > 0:
-            # Sample with replacement from the candidate negative destination nodes
             neg_dst_indices = torch.randint(0, len(candidate_neg_dst), (num_neg_edges,), device=src.device)
             neg_dst = candidate_neg_dst[neg_dst_indices]
         else:
-            # Fallback: If all nodes are destination nodes in the graph,
-            # revert to uniform random sampling.
+            # Fallback if no candidate nodes are available.
             neg_dst = torch.randint(0, num_dst_nodes, (num_neg_edges,), device=src.device)
-            
-        # Create negative graph
+
+        # Create the negative graph.
         neg_graph = dgl.heterograph(
             {etype: (neg_src, neg_dst)},
             num_nodes_dict={ntype: graph.num_nodes(ntype) for ntype in graph.ntypes}
         )
-        
+
         return neg_graph
 
     def multi_metric_evaluation(self, pos_scores, neg_scores):
@@ -319,7 +324,7 @@ class TrainerMixin:
 
         return split_metrics, metrics_std
 
-    def train_model(self, model, loss_f, target_etypes, target_entities, device, bs=500000, num_epochs=100):
+    def train_model(self, model, loss_f, target_etypes, device, bs=500000, num_epochs=100):
         self.move_to_device(device)
         model = model.to(device)
 

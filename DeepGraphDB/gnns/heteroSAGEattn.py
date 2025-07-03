@@ -118,6 +118,47 @@ class HeteroGraphSAGE(nn.Module):
         
         return h
 
+class RelationalGraphConvolutionalNetwork(nn.Module):
+    """
+    Relational Graph Convolutional Network (R-GCN) implementation
+    """
+    def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, num_layers=2):
+        super().__init__()
+        self.node_types = node_types
+        self.edge_types = edge_types
+        self.num_layers = num_layers
+
+        # Input projection to map features of different node types to a common dimension
+        self.input_proj = nn.ModuleDict({
+            ntype: nn.Linear(in_feats[ntype] if isinstance(in_feats, dict) else in_feats, hidden_feats)
+            for ntype in node_types
+        })
+
+        self.layers = nn.ModuleList()
+        # R-GCN layers
+        for i in range(num_layers):
+            in_dim = hidden_feats
+            out_dim = out_feats if i == num_layers - 1 else hidden_feats
+            
+            self.layers.append(dglnn.HeteroGraphConv({
+                rel: dglnn.GraphConv(in_dim, out_dim)
+                for rel in edge_types
+            }, aggregate='mean'))
+
+    def forward(self, blocks, x):
+        h = {}
+        # Apply input projection
+        for ntype in x:
+            h[ntype] = self.input_proj[ntype](x[ntype])
+
+        # Propagate through layers
+        for i, (layer, block) in enumerate(zip(self.layers, blocks)):
+            h_new = layer(block, h)
+            h = h_new
+            if i < len(self.layers) - 1:
+                h = {k: F.relu(v) for k, v in h.items()}
+        return h
+
 class MultiEdgeTypePredictor(nn.Module):
     """
     Advanced predictor that can handle multiple edge types simultaneously
@@ -227,23 +268,54 @@ class AdvancedHeteroLinkPredictor(nn.Module):
     """
     Advanced heterogeneous link prediction model with multiple edge type support
     """
-    def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, 
+    def __init__(self, node_types, edge_types, canonical_etypes, in_feats, hidden_feats, out_feats, 
                  num_layers=3, use_attention=True, predictor_type='multi_edge', target_etypes=None):
         super().__init__()
         self.node_types = node_types
         self.edge_types = edge_types
+        self.canonical_etypes = canonical_etypes
         self.target_etypes = target_etypes or edge_types
         
-        # Advanced GNN backbone (uses all edge types for message passing)
-        self.gnn = HeteroGraphSAGE(
-            node_types=node_types,
-            edge_types=edge_types,
-            in_feats=in_feats,
-            hidden_feats=hidden_feats,
-            out_feats=out_feats,
-            num_layers=num_layers,
-            use_attention=use_attention
-        )
+        # if gnn_type == 'sage':
+        #     # Advanced GNN backbone (uses all edge types for message passing)
+        #     self.gnn = HeteroGraphSAGE(
+        #         node_types=node_types,
+        #         edge_types=edge_types,
+        #         in_feats=in_feats,
+        #         hidden_feats=hidden_feats,
+        #         out_feats=out_feats,
+        #         num_layers=num_layers,
+        #         use_attention=use_attention
+        #     )
+        # elif gnn_type == 'rgcn':
+        #     self.gnn = RelationalGraphConvolutionalNetwork(
+        #         node_types=node_types,
+        #         edge_types=edge_types,
+        #         in_feats=in_feats,
+        #         hidden_feats=hidden_feats,
+        #         out_feats=out_feats,
+        #         num_layers=num_layers
+        #     )
+        # elif gnn_type == 'rgat':
+        #     self.gnn = RelationalGATNetwork(
+        #         node_types=node_types,
+        #         edge_types=edge_types,
+        #         in_feats=in_feats,
+        #         hidden_feats=hidden_feats,
+        #         out_feats=out_feats,
+        #         num_layers=num_layers
+        #     )
+        # else:
+        #     raise ValueError(f"Unsupported GNN type: {gnn_type}")
+
+        self.gnn = RelationalGraphConvolutionalNetwork(
+                node_types=node_types,
+                edge_types=canonical_etypes,
+                in_feats=in_feats,
+                hidden_feats=hidden_feats,
+                out_feats=out_feats,
+                num_layers=num_layers
+            )
         
         # Advanced predictor (only for target edge types)
         if predictor_type == 'multi_edge':
