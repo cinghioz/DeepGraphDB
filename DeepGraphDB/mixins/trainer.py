@@ -254,7 +254,7 @@ class TrainerMixin:
             **hit_at_k
         }
 
-    def evaluate_on_split(self, model, edge_splits, target_etypes, split_name, device, num_neg_samples=5):
+    def evaluate_on_split(self, model, train_graph, edge_splits, target_etypes, split_name, device, num_neg_samples=5):
         """
         Evaluate model on a specific data split (val or test) using multiple negative samples.
         
@@ -292,7 +292,8 @@ class TrainerMixin:
                 input_features = {ntype: self.graph.nodes[ntype].data['x'] for ntype in self.graph.ntypes}
                 
                 # Create blocks for GNN (using full graph for message passing)
-                blocks = [self.graph, self.graph, self.graph]
+                # blocks = [self.graph, self.graph, self.graph]
+                blocks = [train_graph, train_graph, train_graph]
                 
                 # Evaluate with multiple negative samples
                 etype_metrics = defaultdict(list)
@@ -393,7 +394,8 @@ class TrainerMixin:
                     input_features = {ntype: self.graph.nodes[ntype].data['x'] for ntype in self.graph.ntypes}
                     
                     # Create blocks for GNN (use full graph for message passing)
-                    blocks = [self.graph, self.graph, self.graph]
+                    # blocks = [self.graph, self.graph, self.graph]
+                    blocks = [train_graph, train_graph, train_graph]
                     
                     # Forward pass
                     pos_score, neg_score = model(pos_graph, neg_graph, blocks, input_features, target_etype)
@@ -402,7 +404,7 @@ class TrainerMixin:
                     # torch.cuda.empty_cache()  # Clear cache to avoid memory issues
 
                     # Compute loss
-                    loss = loss_f(pos_score, neg_score)
+                    loss = loss_f(pos_score, neg_score, loss_type='bce')
                     
                     # Backward pass
                     optimizer.zero_grad()
@@ -414,7 +416,7 @@ class TrainerMixin:
             
             if (epoch+1) % 30 == 0:  # Evaluate every 30 epochs
                 # Evaluate on validation set (val on 10 different negative graph)
-                val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device, 10)
+                val_metrics, _ = self.evaluate_on_split(model, train_graph, edge_splits, target_etypes, 'val', device, 10)
                 
                 print(f"\nEpoch {epoch:03d} | Loss: {total_loss:.4f}")
                 

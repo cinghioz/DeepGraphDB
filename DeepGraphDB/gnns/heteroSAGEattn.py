@@ -19,9 +19,108 @@ from collections import defaultdict
 # Set PyTorch backend for DGL
 os.environ["DGLBACKEND"] = "pytorch"
 
+# class HeteroGraphSAGE(nn.Module):
+#     """
+#     Heterogeneous GraphSAGE implementation with attention mechanism
+#     """
+#     def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, 
+#                  num_layers=2, aggregator_type='mean', use_attention=True):
+#         super().__init__()
+#         self.node_types = node_types
+#         self.edge_types = edge_types
+#         self.num_layers = num_layers
+#         self.use_attention = use_attention
+
+#         print(node_types)
+        
+#         # Input projection for different node types
+#         self.input_proj = nn.ModuleDict({
+#             ntype: nn.Linear(in_feats[ntype] if isinstance(in_feats, dict) else in_feats, hidden_feats)
+#             for ntype in node_types
+#         })
+        
+#         # GraphSAGE layers
+#         self.sage_layers = nn.ModuleList()
+#         self.layer_norms = nn.ModuleList()
+        
+#         for i in range(num_layers):
+#             in_dim = hidden_feats
+#             out_dim = hidden_feats if i < num_layers - 1 else out_feats
+            
+#             # Use different aggregators for different layers
+#             conv_dict = {}
+#             for etype in edge_types:
+#                 conv_dict[etype] = dglnn.SAGEConv(
+#                     in_feats=in_dim,
+#                     out_feats=out_dim,
+#                     aggregator_type=aggregator_type,
+#                     norm=F.relu if i < num_layers - 1 else None,
+#                     activation=F.relu if i < num_layers - 1 else None
+#                 )
+            
+#             self.sage_layers.append(
+#                 dglnn.HeteroGraphConv(conv_dict, aggregate='sum')
+#             )
+            
+#             # Layer norm for each layer with correct dimensions
+#             layer_norm_dict = nn.ModuleDict({
+#                 ntype: nn.LayerNorm(out_dim) for ntype in node_types
+#             })
+#             self.layer_norms.append(layer_norm_dict)
+        
+#         # Attention mechanism for heterogeneous message passing
+#         if use_attention:
+#             self.attention = nn.ModuleDict({
+#                 ntype: nn.MultiheadAttention(
+#                     embed_dim=out_feats,
+#                     num_heads=4,
+#                     dropout=0.1,
+#                     batch_first=True
+#                 ) for ntype in node_types
+#             })
+        
+#         self.dropout = nn.Dropout(0.3)
+        
+#     def forward(self, blocks, x):
+#         h = {}
+        
+#         # Input projection
+#         for ntype in self.node_types:
+#             if ntype in x:
+#                 h[ntype] = self.input_proj[ntype](x[ntype])
+        
+#         # Forward through SAGE layers
+#         for i, (layer, block) in enumerate(zip(self.sage_layers, blocks)):
+#             h_new = layer(block, h)
+            
+#             # Apply attention if enabled (only on final layer)
+#             if self.use_attention and i == len(self.sage_layers) - 1:
+#                 for ntype in h_new:
+#                     if h_new[ntype].dim() == 2:
+#                         # Add sequence dimension for attention
+#                         h_input = h_new[ntype].unsqueeze(1)  # [N, 1, D]
+#                         attn_out, _ = self.attention[ntype](h_input, h_input, h_input)
+#                         h_new[ntype] = attn_out.squeeze(1)  # [N, D]
+            
+#             # Layer normalization and residual connection
+#             if i > 0:  # Skip connection from previous layer
+#                 for ntype in h_new:
+#                     if ntype in h and h[ntype].shape == h_new[ntype].shape:
+#                         h_new[ntype] = h_new[ntype] + h[ntype]
+            
+#             # Apply layer norm and dropout with correct dimensions
+#             for ntype in h_new:
+#                 h_new[ntype] = self.layer_norms[i][ntype](h_new[ntype])
+#                 if i < len(self.sage_layers) - 1:
+#                     h_new[ntype] = self.dropout(h_new[ntype])
+            
+#             h = h_new
+        
+#         return h
+
 class HeteroGraphSAGE(nn.Module):
     """
-    Heterogeneous GraphSAGE implementation with attention mechanism
+    Heterogeneous GraphSAGE implementation with a score-influenced attention mechanism.
     """
     def __init__(self, node_types, edge_types, in_feats, hidden_feats, out_feats, 
                  num_layers=2, aggregator_type='mean', use_attention=True):
@@ -31,8 +130,6 @@ class HeteroGraphSAGE(nn.Module):
         self.num_layers = num_layers
         self.use_attention = use_attention
 
-        print(node_types)
-        
         # Input projection for different node types
         self.input_proj = nn.ModuleDict({
             ntype: nn.Linear(in_feats[ntype] if isinstance(in_feats, dict) else in_feats, hidden_feats)
@@ -47,41 +144,27 @@ class HeteroGraphSAGE(nn.Module):
             in_dim = hidden_feats
             out_dim = hidden_feats if i < num_layers - 1 else out_feats
             
-            # Use different aggregators for different layers
-            conv_dict = {}
-            for etype in edge_types:
-                conv_dict[etype] = dglnn.SAGEConv(
-                    in_feats=in_dim,
-                    out_feats=out_dim,
-                    aggregator_type=aggregator_type,
-                    norm=F.relu if i < num_layers - 1 else None,
-                    activation=F.relu if i < num_layers - 1 else None
-                )
+            conv_dict = {
+                etype: dglnn.SAGEConv(
+                    in_feats=in_dim, out_feats=out_dim, aggregator_type=aggregator_type,
+                    # No activation/norm in SAGEConv, we apply it after aggregation
+                    norm=None, activation=None
+                ) for etype in edge_types
+            }
             
-            self.sage_layers.append(
-                dglnn.HeteroGraphConv(conv_dict, aggregate='sum')
-            )
-            
-            # Layer norm for each layer with correct dimensions
-            layer_norm_dict = nn.ModuleDict({
-                ntype: nn.LayerNorm(out_dim) for ntype in node_types
-            })
-            self.layer_norms.append(layer_norm_dict)
+            self.sage_layers.append(dglnn.HeteroGraphConv(conv_dict, aggregate='sum'))
+            self.layer_norms.append(nn.ModuleDict({ntype: nn.LayerNorm(out_dim) for ntype in node_types}))
         
-        # Attention mechanism for heterogeneous message passing
+        # Attention mechanism
         if use_attention:
             self.attention = nn.ModuleDict({
-                ntype: nn.MultiheadAttention(
-                    embed_dim=out_feats,
-                    num_heads=4,
-                    dropout=0.1,
-                    batch_first=True
-                ) for ntype in node_types
+                ntype: nn.MultiheadAttention(embed_dim=out_feats, num_heads=4, dropout=0.1, batch_first=True) 
+                for ntype in node_types
             })
         
         self.dropout = nn.Dropout(0.3)
         
-    def forward(self, blocks, x):
+    def forward(self, blocks, x, scores):
         h = {}
         
         # Input projection
@@ -91,31 +174,51 @@ class HeteroGraphSAGE(nn.Module):
         
         # Forward through SAGE layers
         for i, (layer, block) in enumerate(zip(self.sage_layers, blocks)):
+            # Store the input to the layer for the residual connection
+            h_in_layer = {k: v.clone() for k, v in h.items()}
+            
             h_new = layer(block, h)
             
-            # Apply attention if enabled (only on final layer)
-            if self.use_attention and i == len(self.sage_layers) - 1:
-                for ntype in h_new:
-                    if h_new[ntype].dim() == 2:
-                        # Add sequence dimension for attention
-                        h_input = h_new[ntype].unsqueeze(1)  # [N, 1, D]
-                        attn_out, _ = self.attention[ntype](h_input, h_input, h_input)
-                        h_new[ntype] = attn_out.squeeze(1)  # [N, D]
-            
-            # Layer normalization and residual connection
-            if i > 0:  # Skip connection from previous layer
-                for ntype in h_new:
-                    if ntype in h and h[ntype].shape == h_new[ntype].shape:
-                        h_new[ntype] = h_new[ntype] + h[ntype]
-            
-            # Apply layer norm and dropout with correct dimensions
+            # Layer normalization and activation
             for ntype in h_new:
                 h_new[ntype] = self.layer_norms[i][ntype](h_new[ntype])
-                if i < len(self.sage_layers) - 1:
+                # Residual connection
+                if ntype in h_in_layer and h_in_layer[ntype].shape == h_new[ntype].shape:
+                    h_new[ntype] = h_new[ntype] + h_in_layer[ntype]
+                if i < self.num_layers - 1:
+                    h_new[ntype] = F.relu(h_new[ntype])
                     h_new[ntype] = self.dropout(h_new[ntype])
-            
+
             h = h_new
         
+        # Apply score-influenced attention on the final output
+        if self.use_attention:
+            # The final features `h` correspond to the destination nodes of the last block
+            final_block = blocks[-1]
+            original_dst_ids = final_block.dstdata[dgl.NID]
+            
+            for ntype in h:
+                if h[ntype].dim() == 2 and ntype in self.attention:
+                    # Get the scores for the nodes in the final output
+                    # node_scores = scores[ntype][original_dst_ids[ntype].long()]
+                    node_scores = scores[ntype]
+                    
+                    # Prepare tensors for attention: [N, 1, D]
+                    h_input = h[ntype].unsqueeze(1)
+                    # Prepare scores for broadcasting: [N, 1, 1]
+                    score_scaler = node_scores.unsqueeze(1).unsqueeze(1)
+
+                    # Create a "value" scaled by the scores
+                    value_with_scores = h_input * score_scaler
+                    
+                    # Apply attention: Query and Key are original features, Value is score-weighted
+                    attn_out, _ = self.attention[ntype](
+                        query=h_input, 
+                        key=h_input, 
+                        value=value_with_scores
+                    )
+                    h[ntype] = attn_out.squeeze(1) # [N, D]
+
         return h
 
 class RelationalGraphConvolutionalNetwork(nn.Module):
@@ -269,14 +372,17 @@ class AdvancedHeteroLinkPredictor(nn.Module):
     Advanced heterogeneous link prediction model with multiple edge type support
     """
     def __init__(self, node_types, edge_types, canonical_etypes, in_feats, hidden_feats, out_feats, 
-                 num_layers=3, use_attention=True, predictor_type='multi_edge', target_etypes=None):
+                 scores=None, num_layers=3, use_attention=True, predictor_type='multi_edge', 
+                 target_etypes=None, gnn_type='rgcn'):
         super().__init__()
         self.node_types = node_types
         self.edge_types = edge_types
         self.canonical_etypes = canonical_etypes
         self.target_etypes = target_etypes or edge_types
-        
-        # if gnn_type == 'sage':
+        self.gnn_type = gnn_type,  # Default GNN type, can be changed to 'rgcn' or 'rgated'
+        self.scores = scores
+
+        # if self.gnn_type == 'sage':
         #     # Advanced GNN backbone (uses all edge types for message passing)
         #     self.gnn = HeteroGraphSAGE(
         #         node_types=node_types,
@@ -287,7 +393,7 @@ class AdvancedHeteroLinkPredictor(nn.Module):
         #         num_layers=num_layers,
         #         use_attention=use_attention
         #     )
-        # elif gnn_type == 'rgcn':
+        # elif self.gnn_type == 'rgcn':
         #     self.gnn = RelationalGraphConvolutionalNetwork(
         #         node_types=node_types,
         #         edge_types=edge_types,
@@ -296,8 +402,20 @@ class AdvancedHeteroLinkPredictor(nn.Module):
         #         out_feats=out_feats,
         #         num_layers=num_layers
         #     )
-        # elif gnn_type == 'rgat':
-        #     self.gnn = RelationalGATNetwork(
+        # else:
+        #     raise ValueError(f"Unsupported GNN type: {self.gnn_type}")
+        
+        self.gnn = HeteroGraphSAGE(
+            node_types=node_types,
+            edge_types=edge_types,
+            in_feats=in_feats,
+            hidden_feats=hidden_feats,
+            out_feats=out_feats,
+            num_layers=num_layers,
+            use_attention=use_attention
+        )
+
+        # self.gnn = RelationalGraphConvolutionalNetwork(
         #         node_types=node_types,
         #         edge_types=edge_types,
         #         in_feats=in_feats,
@@ -305,18 +423,7 @@ class AdvancedHeteroLinkPredictor(nn.Module):
         #         out_feats=out_feats,
         #         num_layers=num_layers
         #     )
-        # else:
-        #     raise ValueError(f"Unsupported GNN type: {gnn_type}")
 
-        self.gnn = RelationalGraphConvolutionalNetwork(
-                node_types=node_types,
-                edge_types=canonical_etypes,
-                in_feats=in_feats,
-                hidden_feats=hidden_feats,
-                out_feats=out_feats,
-                num_layers=num_layers
-            )
-        
         # Advanced predictor (only for target edge types)
         if predictor_type == 'multi_edge':
             self.predictor = MultiEdgeTypePredictor(out_feats, hidden_feats, self.target_etypes)
@@ -325,7 +432,10 @@ class AdvancedHeteroLinkPredictor(nn.Module):
             
     def forward(self, pos_graph, neg_graph, blocks, x, etype):
         # Get node representations
-        h = self.gnn(blocks, x)
+        if self.scores:
+            h = self.gnn(blocks, x, self.scores)
+        else:
+            h = self.gnn(blocks, x)
         
         # Compute scores
         pos_score = self.predictor(pos_graph, h, etype)
@@ -337,7 +447,12 @@ class AdvancedHeteroLinkPredictor(nn.Module):
         """
         Get node embeddings for the entire graph
         """
-        h = self.gnn([graph, graph, graph], x)
+        with torch.no_grad():
+            if self.scores:
+                h = self.gnn([graph, graph, graph], x, self.scores)
+            else:
+                h = self.gnn([graph, graph, graph], x)
+
         return {ntype: h[ntype].detach() for ntype in self.node_types}
 
 # Enhanced loss function with margin-based ranking
