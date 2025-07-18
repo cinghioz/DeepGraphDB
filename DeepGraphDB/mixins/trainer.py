@@ -466,7 +466,7 @@ class TrainerMixin:
 
         print("\nTraining completed!")
 
-        self._final_evaluation(model, edge_splits, target_etypes, device)
+        self._final_evaluation(model, train_graph,  edge_splits, target_etypes, device)
 
         embs = model.get_embeddings(self.graph, {ntype: self.graph.nodes[ntype].data['x'] for ntype in self.graph.ntypes})
 
@@ -488,14 +488,14 @@ class TrainerMixin:
 
         return embs
 
-    def _final_evaluation(self, model, edge_splits, target_etypes, device):
+    def _final_evaluation(self, model, train_graph,  edge_splits, target_etypes, device):
         print("\n" + "="*50)
         print("FINAL EVALUATION")
         print("="*50)
 
         # Validation set evaluation
         print("\nValidation Set Results:")
-        val_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'val', device)
+        val_metrics, _ = self.evaluate_on_split(model, train_graph,  edge_splits, target_etypes, 'val', device)
         epoch_aucs = []
         epoch_aps = []
 
@@ -522,7 +522,7 @@ class TrainerMixin:
 
         # Test set evaluation  
         print("\nTest Set Results:")
-        test_metrics, _ = self.evaluate_on_split(model, edge_splits, target_etypes, 'test', device)
+        test_metrics, _ = self.evaluate_on_split(model, train_graph, edge_splits, target_etypes, 'test', device)
         epoch_aucs = []
         epoch_aps = []
 
