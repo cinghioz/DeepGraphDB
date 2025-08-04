@@ -176,6 +176,7 @@ class TrainerMixin:
         
     #     return neg_graph
 
+    # TODO: da mettere apposto
     def negative_sampling(self, graph, etype, k=1):
         """
         Negative sampling that selects destination nodes that do not appear
@@ -192,8 +193,6 @@ class TrainerMixin:
         if src_type == dst_type:
             all_involved_nodes = torch.cat([src, dst])
             nodes_to_exclude = torch.unique(all_involved_nodes)
-
-        # --- The rest of the logic remains the same ---
 
         num_dst_nodes = graph.num_nodes(dst_type)
 
