@@ -8,6 +8,7 @@ models/
 ChromaVDB/__pycache__
 gnns/__pycache__
 start_feats.pt
+triplets.pt
 model.pt
 DeepGraphDB/graphs
 best_nbfnet_model.pth
